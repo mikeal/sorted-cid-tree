@@ -3,7 +3,7 @@ import * as codec from '@ipld/dag-cbor'
 import raw from 'multiformats/codecs/raw'
 import { sha256 as hasher } from 'multiformats/hashes/sha2'
 import { encode as _encode, decode as _decode } from 'multiformats/block'
-import { deepStrictEqual as same } from 'assert'
+import { deepStrictEqual as same, ok } from 'assert'
 
 const encode = opts => _encode({ codec, hasher, ...opts })
 const decode = opts => _decode({ codec, hasher, ...opts })
@@ -30,13 +30,27 @@ export default async test => {
     const { put, get } = mock()
     const blocks = await Promise.all(fixtures)
     let last
+    const structure = []
     for await (const block of main.fromBlocks(blocks)) {
       await put(block)
       last = block
+      structure.push(block)
     }
+    /*
+    console.log({
+      length: structure.map(() => 1).reduce((x,y) => x + y),
+      size: structure.map(b => b.bytes.byteLength).reduce((x,y) => x + y)
+    })
+    */
     for (const block of blocks) {
-      const cid = await main.has(block.cid, last.cid, get)
-      same(cid.equals(block.cid), true)
+      const depth = await main.has(block.cid, last.cid, get, { fullDepth: true })
+      same(depth, 3)
+    }
+    const rand = await encode({ value: Math.random() })
+    try {
+      await main.has(rand.cid, last.cid, get)
+    } catch (e) {
+      if (!e.message.includes('Not found')) throw e
     }
   })
 }

@@ -70,10 +70,13 @@ const fromBlocks = async function * (arr) {
   }
 }
 
-const has = async (cid, root, get) => {
+const has = async (cid, root, get, opts={}) => {
+  const { fullDepth } = opts
   let branch = root
   let _prev
+  let depth = 0
   while (!branch.equals(cid)) {
+    depth += 1
     if (_prev && _prev.equals(branch)) throw new Error(`Not found in tree “"${cid.toString()}"`)
     const { value: entries } = await get(branch)
     _prev = branch
@@ -90,7 +93,11 @@ const has = async (cid, root, get) => {
         isBranch = true
       }
       const comp = compare(key.bytes, cid.bytes)
-      if (comp === 0) return key
+      if (comp === 0) {
+        if (!fullDepth || !isBranch) return depth
+        branch = value
+        break
+      }
       if (comp < 0) {
         if (isBranch) branch = value
       } else {
