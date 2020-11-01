@@ -112,37 +112,60 @@ const range = async function * ({ start, end, root, get }) {
   if (start.asCID === start) start = start.bytes
   if (end.asCID === end) end = end.bytes
   const { value: parent } = await get(root)
+
+  let prev
   if (Array.isArray(parent[0])) {
     // branch node
-    for (let i = 0; i < parent.length; i++) {
-      const [first, link] = parent[i]
-      const next = parent[i + 1] ? parent[i + 1][0] : null
+    const part = [...parent]
+    let traversals = []
+    let prev
 
-      const query = { start, end, root: link, get }
-
-      let comp
-      if (!next) {
-        comp = compare(first.bytes, end)
-        if (comp < 1) {
-          yield * range(query)
-        }
-      } else {
-        comp = compare(next.bytes, end)
-        if (comp < 1) {
-          comp = compare(first.bytes, end)
-          if (comp > 0) continue
-          yield * range(query)
+    // first, prepare a list of traversals that match
+    // anything withing the left side of the range
+    while (part.length) {
+      const tail = part.pop()
+      const [ key, link ] = tail
+      if (prev) {
+        if (compare(prev.bytes, key.bytes) !== 1) {
+          throw new Error('Structure out of order')
         }
       }
+      let comp = compare(key.bytes, end)
+      if (comp < 1) {
+        comp = compare(key.bytes, start)
+        traversals.push([key, link])
+      }
+    }
+
+    // order the traverals since the prior match was in reverse order
+    traversals = traversals.reverse()
+
+    // find the first element within the start range and truncate
+    // any more than 1 branch ahead of that branch
+    const firstMatch = traversals.findIndex(([key]) => {
+      const comp = compare(key.bytes, start)
+      if (comp > -1) return true
+    })
+    if (firstMatch > 1) {
+      traversals = traversals.slice(firstMatch - 1)
+    }
+
+    // finally, traverse the range which is branches that are:
+    // 1. guaranteed to be within the left side of the range
+    // 2. guaranteed to include at least one element within the right
+    //    side of the range
+    for (const [key, link ] of traversals) {
+      yield * range({ start, end, root: link, get })
     }
   } else {
     // leaf node
     for (const cid of parent) {
       let comp = compare(cid.bytes, end)
-      if (comp > 0) return
-      comp = compare(cid.bytes, start)
-      if (comp > -1) {
-        yield cid
+      if (comp < 1) {
+        comp = compare(cid.bytes, start)
+        if (comp > -1) {
+          yield cid
+        }
       }
     }
   }

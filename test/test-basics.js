@@ -25,17 +25,22 @@ const mock = () => {
   return { get, put }
 }
 
+const create = async () => {
+  const { put, get } = mock()
+  const blocks = await Promise.all(fixtures)
+  let last
+  const structure = []
+  for await (const block of main.fromBlocks(blocks)) {
+    await put(block)
+    last = block
+    structure.push(block)
+  }
+  return { put, get, structure, blocks, root: last.cid }
+}
+
 export default async test => {
   test('basic map (512 entries)', async test => {
-    const { put, get } = mock()
-    const blocks = await Promise.all(fixtures)
-    let last
-    const structure = []
-    for await (const block of main.fromBlocks(blocks)) {
-      await put(block)
-      last = block
-      structure.push(block)
-    }
+    const { get, structure, blocks, root } = await create()
     /*
     console.log({
       length: structure.map(() => 1).reduce((x,y) => x + y),
@@ -43,14 +48,48 @@ export default async test => {
     })
     */
     for (const block of blocks) {
-      const depth = await main.has(block.cid, last.cid, get, { fullDepth: true })
+      const depth = await main.has(block.cid, root, get, { fullDepth: true })
       same(depth, 3)
     }
     const rand = await encode({ value: Math.random() })
     try {
-      await main.has(rand.cid, last.cid, get)
+      await main.has(rand.cid, root, get)
     } catch (e) {
       if (!e.message.includes('Not found')) throw e
+    }
+  })
+  test('range query (full)', async test => {
+    const { get, blocks, root } = await create()
+    const expecting = blocks.map(b => b.cid).sort(({ bytes: a }, { bytes: b }) => main.compare(a, b))
+    for await (const cid of main.range({ get, root })) {
+      const expected = expecting.shift()
+      if (cid.toString() !== expected.toString()) throw new Error('Not expecting')
+    }
+    if (expecting.length) throw new Error('Did not emit all blocks')
+
+    for await (const test of main.range({ get, root, start: main.hardStop })) {
+      throw new Error('should not see any entries')
+    }
+  })
+  test('range query (narrowing)', async test => {
+    const { get, blocks, root } = await create()
+    const expecting = new Set(blocks.map(b => b.cid.toString()))
+
+    let sorted = blocks.map(b => b.cid).sort(({ bytes: a }, { bytes: b }) => main.compare(a, b))
+
+    while (sorted.length) {
+      sorted = sorted.slice(1, sorted.length -2)
+      const start = sorted[0]
+      const end = sorted[sorted.length -1]
+      const expecting = [...sorted]
+      if (!start || !end) break
+      for await (const cid of main.range({ get, root, start, end })) {
+        const expected = expecting.shift()
+        if (cid.toString() !== expected.toString()) throw new Error('Not expecting')
+      }
+      if (expecting.length) {
+        throw new Error('Did not emit all blocks, missing ' + expecting.length)
+      }
     }
   })
 }
